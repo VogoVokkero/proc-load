@@ -36,7 +36,7 @@ const char *gengetopt_args_info_description = "";
 const char *gengetopt_args_info_help[] = {
   "  -h, --help           Print help and exit",
   "  -V, --version        Print version and exit",
-  "  -c, --config=STRING  path to the json file, that specifies process to\n                         monitor.  (default=`processes.json')",
+  "  -c, --config=STRING  path to the json file, that specifies process to\n                         monitor.",
     0
 };
 
@@ -53,8 +53,6 @@ static int
 cmdline_parser_internal (int argc, char **argv, struct gengetopt_args_info *args_info,
                         struct cmdline_parser_params *params, const char *additional_error);
 
-static int
-cmdline_parser_required2 (struct gengetopt_args_info *args_info, const char *prog_name, const char *additional_error);
 
 static char *
 gengetopt_strdup (const char *s);
@@ -71,7 +69,7 @@ static
 void clear_args (struct gengetopt_args_info *args_info)
 {
   FIX_UNUSED (args_info);
-  args_info->config_arg = gengetopt_strdup ("processes.json");
+  args_info->config_arg = NULL;
   args_info->config_orig = NULL;
   
 }
@@ -306,37 +304,9 @@ cmdline_parser2 (int argc, char **argv, struct gengetopt_args_info *args_info, i
 int
 cmdline_parser_required (struct gengetopt_args_info *args_info, const char *prog_name)
 {
-  int result = EXIT_SUCCESS;
-
-  if (cmdline_parser_required2(args_info, prog_name, 0) > 0)
-    result = EXIT_FAILURE;
-
-  if (result == EXIT_FAILURE)
-    {
-      cmdline_parser_free (args_info);
-      exit (EXIT_FAILURE);
-    }
-  
-  return result;
-}
-
-int
-cmdline_parser_required2 (struct gengetopt_args_info *args_info, const char *prog_name, const char *additional_error)
-{
-  int error_occurred = 0;
-  FIX_UNUSED (additional_error);
-
-  /* checks for required options */
-  if (! args_info->config_given)
-    {
-      fprintf (stderr, "%s: '--config' ('-c') option required%s\n", prog_name, (additional_error ? additional_error : ""));
-      error_occurred = 1;
-    }
-  
-  
-  /* checks for dependences among options */
-
-  return error_occurred;
+  FIX_UNUSED (args_info);
+  FIX_UNUSED (prog_name);
+  return EXIT_SUCCESS;
 }
 
 
@@ -509,7 +479,7 @@ cmdline_parser_internal (
         
           if (update_arg( (void *)&(args_info->config_arg), 
                &(args_info->config_orig), &(args_info->config_given),
-              &(local_args_info.config_given), optarg, 0, "processes.json", ARG_STRING,
+              &(local_args_info.config_given), optarg, 0, 0, ARG_STRING,
               check_ambiguity, override, 0, 0,
               "config", 'c',
               additional_error))
@@ -530,10 +500,7 @@ cmdline_parser_internal (
 
 
 
-  if (check_required)
-    {
-      error_occurred += cmdline_parser_required2 (args_info, argv[0], additional_error);
-    }
+	FIX_UNUSED(check_required);
 
   cmdline_parser_release (&local_args_info);
 

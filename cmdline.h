@@ -39,7 +39,7 @@ struct gengetopt_args_info
 {
   const char *help_help; /**< @brief Print help and exit help description.  */
   const char *version_help; /**< @brief Print version and exit help description.  */
-  char * config_arg;	/**< @brief path to the json file, that specifies process to monitor. (default='processes.json').  */
+  char * config_arg;	/**< @brief path to the json file, that specifies process to monitor..  */
   char * config_orig;	/**< @brief path to the json file, that specifies process to monitor. original value given at command line.  */
   const char *config_help; /**< @brief path to the json file, that specifies process to monitor. help description.  */
   
