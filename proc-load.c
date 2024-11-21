@@ -81,7 +81,7 @@ void get_uptime(double *uptime)
     fclose(file);
 }
 
-ProcessCPU get_process_cpu(const char *pid)
+ProcessCPU get_process_cpu_kernel_5_4_3(const char *pid)
 {
     char stat_path[BUFFER_SIZE];
     FILE *file;
@@ -96,9 +96,35 @@ ProcessCPU get_process_cpu(const char *pid)
         return p_cpu;
     }
 
+/* 
+  pid           process id
+  tcomm         filename of the executable
+  state         state (R is running, S is sleeping, D is sleeping in an
+                uninterruptible wait, Z is zombie, T is traced or stopped)
+  ppid          process id of the parent process
+  pgrp          pgrp of the process
+  sid           session id
+  tty_nr        tty the process uses
+  tty_pgrp      pgrp of the tty
+  flags         task flags
+  min_flt       number of minor faults
+  cmin_flt      number of minor faults with child's
+  maj_flt       number of major faults
+  cmaj_flt      number of major faults with child's
+  utime         user mode jiffies
+  stime         kernel mode jiffies
+  cutime        user mode jiffies with child's
+  cstime        kernel mode jiffies with child's
+  priority      priority level
+  nice          nice level
+  num_threads   number of threads
+
+  2793 (mco-audioApp) S 1 2793 2793 0 -1 1077936384 654 0 0 0 39868 1032
+
+*/
+
     long utime, stime;
-    if (fscanf(file, "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %*u %ld %ld",
-               &utime, &stime) == 2)
+    if (fscanf(file, "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u", &utime, &stime) == 2)
     {
         p_cpu.utime = utime;
         p_cpu.stime = stime;
@@ -147,7 +173,7 @@ void monitor_process(const char *cmdline, double *cpu_usage)
         {
             if (match_cmdline(entry->d_name, cmdline))
             {
-                ProcessCPU current_cpu = get_process_cpu(entry->d_name);
+                ProcessCPU current_cpu = get_process_cpu_kernel_5_4_3(entry->d_name);
 
                 long utime_diff = current_cpu.utime - prev_cpu.utime;
                 long stime_diff = current_cpu.stime - prev_cpu.stime;
@@ -230,7 +256,6 @@ int main(int argc, char *argv[])
     {
         double cpu_usage = 0.0, uptime = 0.0;
         get_cpu_usage(&cpu_usage);
-        get_uptime(&uptime);
 
         DLT_LOG(dlt_ctxt_load, DLT_LOG_INFO, DLT_STRING("CPU"), DLT_INT((int)cpu_usage));
 

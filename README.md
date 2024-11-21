@@ -41,3 +41,7 @@ gengetopt < proc-load.ggo
 ```bash
 ./proc-load -c config.json
 ```
+
+## TODO
+
+* check the kernel version at startup, and use the /proc fs accordingly
