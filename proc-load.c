@@ -6,6 +6,11 @@
 #include "cmdline.h"
 #include "cJSON.h" // Assurez-vous d'avoir cJSON
 
+#include "dlt/dlt.h"
+#include "dlt/dlt_user_macros.h"
+
+DLT_DECLARE_CONTEXT(dlt_ctxt_load);
+
 #define BUFFER_SIZE 256
 
 typedef struct {
@@ -181,6 +186,11 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    DLT_REGISTER_APP("LOAD","proc load application");
+    DLT_REGISTER_CONTEXT_LL_TS(dlt_ctxt_load,"LOAD","Load", DLT_LOG_INFO, DLT_TRACE_STATUS_DEFAULT);
+
+    DLT_LOG(dlt_ctxt_load, DLT_LOG_INFO, DLT_STRING("Starting proc load application."));
+
     // Get the JSON file specified by the -c option or the default value
     const char *json_file = args_info.config_arg;
 
@@ -214,6 +224,10 @@ int main(int argc, char *argv[]) {
 
     // Free memory used for arguments
     cmdline_parser_free(&args_info);
+
+    DLT_UNREGISTER_CONTEXT(dlt_ctxt_load);
+
+	DLT_UNREGISTER_APP();
 
     return 0;
 }
