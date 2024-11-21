@@ -1,3 +1,5 @@
 [
+    "/usr/bin/mco-audioApp",
+    "/usr/bin/mqtt-uart-bridge",
     "/usr/bin/gnome-shell"
 ]

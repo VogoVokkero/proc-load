@@ -1,29 +1,71 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
 #include "cmdline.h"
-#include "cJSON.h" // Assurez-vous d'avoir cJSON
+#include <json-c/json.h>
 
 #include "dlt/dlt.h"
 #include "dlt/dlt_user_macros.h"
 
-DLT_DECLARE_CONTEXT(dlt_ctxt_load);
+DLT_DECLARE_CONTEXT(dlt_ctxt_cpu);
+DLT_DECLARE_CONTEXT(dlt_ctxt_proc);
 
 #define BUFFER_SIZE 256
 
 typedef struct
 {
-    long utime;
-    long stime;
+    // cpu load is computed by delta from one measurement to another
+    // proc_jiffies = user_jiffies + system_jiffies
+    // cpu_load = proc_jiffies[k] - proc_jiffies[k-1] / (g_uptime_jiffies [k] - g_uptime_jiffies[k-1])
+    uint32_t proc_jiffies;
+    uint32_t proc_jiffies_prev;
+
+    uint32_t rss;
+
+    double cpu;
+
+    char *cmdline;
+    uint32_t pid;
+
 } ProcessCPU;
 
-void get_cpu_usage(double *usage)
+ProcessCPU processes[10];
+
+uint32_t g_uptime_jiffies = 0U;
+uint32_t g_uptime_jiffies_prev = 0U;
+uint32_t g_clock_ticks = 0U;
+size_t g_page_sz = 0;
+struct gengetopt_args_info g_args_info = {0};
+
+/*
+- user: normal processes executing in user mode
+- nice: niced processes executing in user mode
+- system: processes executing in kernel mode
+- idle: twiddling thumbs
+- iowait: In a word, iowait stands for waiting for I/O to complete. But there
+  are several problems:
+  1. Cpu will not wait for I/O to complete, iowait is the time that a task is
+     waiting for I/O to complete. When cpu goes into idle state for
+     outstanding task io, another task will be scheduled on this CPU.
+  2. In a multi-core CPU, the task waiting for I/O to complete is not running
+     on any CPU, so the iowait of each CPU is difficult to calculate.
+  3. The value of iowait field in /proc/stat will decrease in certain
+     conditions.
+  So, the iowait is not reliable by reading from /proc/stat.
+- irq: servicing interrupts
+- softirq: servicing softirqs
+- steal: involuntary wait
+- guest: running a normal guest
+- guest_nice: running a niced guest
+*/
+static void get_cpu_usage(double *usage)
 {
-    static long prev_idle = 0, prev_total = 0;
-    long idle, total;
-    long user, nice, system, idle_time, iowait, irq, softirq, steal;
+    static uint32_t prev_idle = 0U, prev_total = 0U;
+    uint32_t idle, total;
+    uint32_t user, nice, system, idle_time, iowait, irq, softirq, steal;
     char buffer[BUFFER_SIZE];
     FILE *file;
 
@@ -31,7 +73,6 @@ void get_cpu_usage(double *usage)
     if (!file)
     {
         perror("Erreur lors de l'ouverture de /proc/stat");
-        exit(EXIT_FAILURE);
     }
 
     if (fgets(buffer, sizeof(buffer), file))
@@ -40,18 +81,11 @@ void get_cpu_usage(double *usage)
                &user, &nice, &system, &idle_time, &iowait, &irq, &softirq, &steal);
 
         idle = idle_time + iowait;
-        total = user + nice + system + idle + irq + softirq + steal;
+        total = user + nice + system + idle_time + iowait + irq + softirq + steal;
 
-        if (prev_total != 0)
-        {
-            long total_diff = total - prev_total;
-            long idle_diff = idle - prev_idle;
-            *usage = 100.0 * (1.0 - ((double)idle_diff / total_diff));
-        }
-        else
-        {
-            *usage = 0.0;
-        }
+        uint32_t total_diff = total - prev_total;
+        uint32_t idle_diff = idle - prev_idle;
+        *usage = 100.0 * (1.0 - ((double)idle_diff / total_diff));
 
         prev_idle = idle;
         prev_total = total;
@@ -60,83 +94,70 @@ void get_cpu_usage(double *usage)
     fclose(file);
 }
 
-void get_uptime(double *uptime)
+static double get_uptime(void)
 {
     FILE *file;
 
     file = fopen("/proc/uptime", "r");
-    if (!file)
+    if (file)
     {
-        perror("Erreur lors de l'ouverture de /proc/uptime");
-        exit(EXIT_FAILURE);
-    }
+        double uptime_seconds = -1.0f;
+        (void)fscanf(file, "%lf", &uptime_seconds);
 
-    if (fscanf(file, "%lf", uptime) != 1)
-    {
-        perror("Erreur lors de la lecture de /proc/uptime");
+        g_uptime_jiffies = (long)(uptime_seconds * g_clock_ticks);
+
         fclose(file);
-        exit(EXIT_FAILURE);
     }
-
-    fclose(file);
 }
 
-ProcessCPU get_process_cpu_kernel_5_4_3(const char *pid)
+#define SSCANF_EXTRACT_UTIME_STIME_RSS "%*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*lu %*s %lu %lu %*s %*s %*s %*s %*s %*s %*s %*s %ld"
+
+static ProcessCPU get_process_cpu_kernel_5_4_3(uint8_t index)
 {
     char stat_path[BUFFER_SIZE];
     FILE *file;
-    ProcessCPU p_cpu = {0, 0};
 
-    snprintf(stat_path, sizeof(stat_path), "/proc/%s/stat", pid);
+    snprintf(stat_path, sizeof(stat_path), "/proc/%ld/stat", processes[index].pid);
 
     file = fopen(stat_path, "r");
-    if (!file)
+    if (file)
     {
-        perror("Erreur lors de l'ouverture de /proc/[pid]/stat");
-        return p_cpu;
+        uint32_t utime, stime;
+        uint32_t rss;
+
+        // update total_jiffies
+        get_uptime();
+
+        if (fscanf(file, SSCANF_EXTRACT_UTIME_STIME_RSS, &utime, &stime, &rss) == 3)
+        {
+            processes[index].proc_jiffies = (utime + stime);
+            processes[index].rss = rss * g_page_sz >> 10; // kBytes
+
+            uint32_t delta_proc_jiffies = processes[index].proc_jiffies - processes[index].proc_jiffies_prev;
+            uint32_t delta_total_jiffies = g_uptime_jiffies - g_uptime_jiffies_prev;
+
+            processes[index].cpu = ((double)delta_proc_jiffies / (double)delta_total_jiffies) * 100.0;
+
+            // shift
+            processes[index].proc_jiffies_prev = processes[index].proc_jiffies;
+            g_uptime_jiffies_prev = g_uptime_jiffies;
+
+            DLT_LOG(dlt_ctxt_cpu, DLT_LOG_DEBUG, DLT_STRING(processes[index].cmdline),
+                    DLT_INT((int)utime),
+                    DLT_INT((int)stime),
+                    DLT_INT((int)processes[index].proc_jiffies),
+                    DLT_INT((int)delta_proc_jiffies),
+                    DLT_INT((int)g_uptime_jiffies),
+                    DLT_STRING("PROC proc_jiffies, delta_proc_jiffies, g_uptime_jiffies"));
+        }
+
+        fclose(file);
     }
-
-/* 
-  pid           process id
-  tcomm         filename of the executable
-  state         state (R is running, S is sleeping, D is sleeping in an
-                uninterruptible wait, Z is zombie, T is traced or stopped)
-  ppid          process id of the parent process
-  pgrp          pgrp of the process
-  sid           session id
-  tty_nr        tty the process uses
-  tty_pgrp      pgrp of the tty
-  flags         task flags
-  min_flt       number of minor faults
-  cmin_flt      number of minor faults with child's
-  maj_flt       number of major faults
-  cmaj_flt      number of major faults with child's
-  utime         user mode jiffies
-  stime         kernel mode jiffies
-  cutime        user mode jiffies with child's
-  cstime        kernel mode jiffies with child's
-  priority      priority level
-  nice          nice level
-  num_threads   number of threads
-
-  2793 (mco-audioApp) S 1 2793 2793 0 -1 1077936384 654 0 0 0 39868 1032
-
-*/
-
-    long utime, stime;
-    if (fscanf(file, "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u", &utime, &stime) == 2)
-    {
-        p_cpu.utime = utime;
-        p_cpu.stime = stime;
-    }
-
-    fclose(file);
-    return p_cpu;
 }
 
-int match_cmdline(const char *pid, const char *target_cmdline)
+static int match_cmdline(const char *pid, const char *target_cmdline)
 {
-    char cmdline_path[BUFFER_SIZE];
+    char cmdline_path[PATH_MAX];
     char cmdline[BUFFER_SIZE];
     FILE *file;
 
@@ -154,132 +175,173 @@ int match_cmdline(const char *pid, const char *target_cmdline)
     return strstr(cmdline, target_cmdline) != NULL;
 }
 
-void monitor_process(const char *cmdline, double *cpu_usage)
+static uint32_t get_pid(const char *cmdline)
 {
     DIR *dir = opendir("/proc");
     struct dirent *entry;
-    ProcessCPU prev_cpu = {0, 0};
-    double total_time = 0.0;
+    uint32_t pid = 0;
 
-    if (!dir)
+    if (NULL != dir)
     {
-        perror("Erreur lors de l'ouverture de /proc");
-        exit(EXIT_FAILURE);
+        while ((entry = readdir(dir)) != NULL)
+        {
+            if (entry->d_type == DT_DIR)
+            {
+                uint32_t spid = atoi(entry->d_name);
+
+                if ((0 < spid) && (match_cmdline(entry->d_name, cmdline)))
+                {
+                    pid = spid;
+                }
+            }
+        }
+        closedir(dir);
     }
 
-    while ((entry = readdir(dir)) != NULL)
+    return pid;
+}
+
+static uint8_t read_json_cmdlines(const char *json_file_path, ProcessCPU *processes)
+{
+    // Open the JSON file
+    uint8_t found_apps = 0;
+    FILE *file = fopen(json_file_path, "r");
+
+    if (!file)
     {
-        if (entry->d_type == DT_DIR && atoi(entry->d_name) > 0)
+        perror("Unable to open file");
+        return 0;
+    }
+
+    // Read the entire file into a buffer
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    rewind(file);
+
+    char *buffer = (char *)malloc(file_size + 1);
+    if (!buffer)
+    {
+        perror("Memory allocation failed");
+        fclose(file);
+        return 0;
+    }
+
+    fread(buffer, 1, file_size, file);
+    buffer[file_size] = '\0';
+    fclose(file);
+
+    // Parse the JSON data
+    struct json_object *parsed_json = json_tokener_parse(buffer);
+    free(buffer);
+
+    if (!parsed_json)
+    {
+        fprintf(stderr, "Error parsing JSON data\n");
+        return 0;
+    }
+
+    if (!json_object_is_type(parsed_json, json_type_array))
+    {
+        fprintf(stderr, "'files' is not a JSON array\n");
+        json_object_put(parsed_json); // Free JSON object
+        return 0;
+    }
+
+    // Iterate over the array and print file names
+    size_t num_files = json_object_array_length(parsed_json);
+
+    for (size_t i = 0; i < num_files; i++)
+    {
+        struct json_object *file_name_obj = json_object_array_get_idx(parsed_json, i);
+        char *cmdline = json_object_get_string(file_name_obj);
+
+        if (NULL != cmdline)
         {
-            if (match_cmdline(entry->d_name, cmdline))
+            uint32_t spid = get_pid(cmdline);
+            if (0 < spid)
             {
-                ProcessCPU current_cpu = get_process_cpu_kernel_5_4_3(entry->d_name);
+                processes[found_apps].pid = spid;
+                processes[found_apps].cmdline = cmdline;
 
-                long utime_diff = current_cpu.utime - prev_cpu.utime;
-                long stime_diff = current_cpu.stime - prev_cpu.stime;
-                total_time = utime_diff + stime_diff;
+                if (g_args_info.verbose_given != 0)
+                {
+                    printf("got pid %d for %s\n", processes[found_apps].pid, processes[found_apps].cmdline);
+                }
 
-                *cpu_usage = (total_time / sysconf(_SC_CLK_TCK)) * 100.0;
-
-                prev_cpu = current_cpu;
+                found_apps++;
+            }
+            else
+            {
+                printf("not found : %s\n", cmdline);
             }
         }
     }
 
-    closedir(dir);
-}
+    // Free the JSON object
+    json_object_put(parsed_json);
 
-void read_json_cmdlines(const char *filename, char ***cmdlines, int *cmdline_count)
-{
-    *cmdline_count = 0;
-
-    FILE *file = fopen(filename, "r");
-    if (file)
-    {
-        fseek(file, 0, SEEK_END);
-        long file_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-
-        char *json_content = malloc(file_size + 1);
-        fread(json_content, 1, file_size, file);
-        json_content[file_size] = '\0';
-        fclose(file);
-
-        cJSON *json = cJSON_Parse(json_content);
-        if (!json)
-        {
-            perror("Erreur lors de l'analyse du fichier JSON");
-            free(json_content);
-            exit(EXIT_FAILURE);
-        }
-
-        int count = cJSON_GetArraySize(json);
-        *cmdline_count = count;
-        *cmdlines = malloc(count * sizeof(char *));
-
-        for (int i = 0; i < count; i++)
-        {
-            cJSON *item = cJSON_GetArrayItem(json, i);
-            (*cmdlines)[i] = strdup(item->valuestring);
-        }
-
-        cJSON_Delete(json);
-        free(json_content);
-    }
+    return found_apps;
 }
 
 int main(int argc, char *argv[])
 {
     // Parse command-line arguments using gengetopt
-    struct gengetopt_args_info args_info;
-    if (cmdline_parser(argc, argv, &args_info) != 0)
+    if (cmdline_parser(argc, argv, &g_args_info) != 0)
     {
         return EXIT_FAILURE;
     }
 
     DLT_REGISTER_APP("LOAD", "proc load application");
-    DLT_REGISTER_CONTEXT_LL_TS(dlt_ctxt_load, "LOAD", "Load", DLT_LOG_INFO, DLT_TRACE_STATUS_DEFAULT);
+    DLT_REGISTER_CONTEXT_LL_TS(dlt_ctxt_cpu, "CPU", "CPU Load", DLT_LOG_INFO, DLT_TRACE_STATUS_DEFAULT);
+    DLT_REGISTER_CONTEXT_LL_TS(dlt_ctxt_proc, "PROC", "Process Stats", DLT_LOG_INFO, DLT_TRACE_STATUS_DEFAULT);
 
-    DLT_LOG(dlt_ctxt_load, DLT_LOG_INFO, DLT_STRING("Starting proc load application."));
+    DLT_LOG(dlt_ctxt_cpu, DLT_LOG_INFO, DLT_STRING("Starting proc load application."));
 
     // Get the JSON file specified by the -c option or the default value
-    const char *json_file = args_info.config_arg;
+    const char *json_file = g_args_info.config_arg;
 
-    char **cmdlines;
-    int cmdline_count;
+    uint8_t cmdline_count;
+
+    g_clock_ticks = sysconf(_SC_CLK_TCK);
+    g_page_sz = sysconf(_SC_PAGE_SIZE);
 
     // Read cmdlines from the JSON file
-    read_json_cmdlines(json_file, &cmdlines, &cmdline_count);
+    cmdline_count = read_json_cmdlines(json_file, processes);
 
     // Main loop
-    while (1)
+    while (0 < cmdline_count)
     {
-        double cpu_usage = 0.0, uptime = 0.0;
+        double cpu_usage = 0.0;
         get_cpu_usage(&cpu_usage);
 
-        DLT_LOG(dlt_ctxt_load, DLT_LOG_INFO, DLT_STRING("CPU"), DLT_INT((int)cpu_usage));
+        DLT_LOG(dlt_ctxt_cpu, DLT_LOG_INFO, DLT_STRING("CPU"), DLT_INT((int)cpu_usage));
 
-        for (int i = 0; i < cmdline_count; i++)
+        for (uint8_t i = 0; i < cmdline_count; i++)
         {
-            double process_cpu = 0.0;
-            monitor_process(cmdlines[i], &process_cpu);
+            if (0 < processes[i].pid)
+            {
+                get_process_cpu_kernel_5_4_3(i);
 
-            DLT_LOG(dlt_ctxt_load, DLT_LOG_INFO, DLT_STRING("PROC"), DLT_STRING(cmdlines[i]), DLT_INT((int)process_cpu));
+                DLT_LOG(dlt_ctxt_proc, DLT_LOG_INFO, DLT_STRING(processes[i].cmdline), DLT_FLOAT32(processes[i].cpu), DLT_INT(processes[i].rss));
+                if (g_args_info.verbose_given != 0)
+                {
+                    printf("%s:\t%02.2f(%%cpu)\t%d(kBytes)\n", processes[i].cmdline, processes[i].cpu, processes[i].rss);
+                }
+            }
         }
-
-        sleep(3);
+        sleep(g_args_info.interval_arg); // integration time
     }
 
-    for (int i = 0; i < cmdline_count; i++)
+    for (uint8_t i = 0; i < cmdline_count; i++)
     {
-        free(cmdlines[i]);
+        free(processes[i].cmdline);
     }
-    free(cmdlines);
 
     // Free memory used for arguments
-    cmdline_parser_free(&args_info);
+    cmdline_parser_free(&g_args_info);
 
-    DLT_UNREGISTER_CONTEXT(dlt_ctxt_load);
+    DLT_UNREGISTER_CONTEXT(dlt_ctxt_cpu);
+    DLT_UNREGISTER_CONTEXT(dlt_ctxt_proc);
 
     DLT_UNREGISTER_APP();
 

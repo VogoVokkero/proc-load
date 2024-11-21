@@ -35,13 +35,17 @@ const char *gengetopt_args_info_description = "";
 
 const char *gengetopt_args_info_help[] = {
   "  -h, --help           Print help and exit",
-  "  -V, --version        Print version and exit",
+  "      --version        Print version and exit",
   "  -c, --config=STRING  path to the json file, that specifies process to\n                         monitor.",
+  "  -V, --verbose        display few debug messages on stderr  (default=off)",
+  "  -i, --interval=INT   integration interval  (default=`3')",
     0
 };
 
 typedef enum {ARG_NO
+  , ARG_FLAG
   , ARG_STRING
+  , ARG_INT
 } cmdline_parser_arg_type;
 
 static
@@ -63,6 +67,8 @@ void clear_given (struct gengetopt_args_info *args_info)
   args_info->help_given = 0 ;
   args_info->version_given = 0 ;
   args_info->config_given = 0 ;
+  args_info->verbose_given = 0 ;
+  args_info->interval_given = 0 ;
 }
 
 static
@@ -71,6 +77,9 @@ void clear_args (struct gengetopt_args_info *args_info)
   FIX_UNUSED (args_info);
   args_info->config_arg = NULL;
   args_info->config_orig = NULL;
+  args_info->verbose_flag = 0;
+  args_info->interval_arg = 3;
+  args_info->interval_orig = NULL;
   
 }
 
@@ -82,6 +91,8 @@ void init_args_info(struct gengetopt_args_info *args_info)
   args_info->help_help = gengetopt_args_info_help[0] ;
   args_info->version_help = gengetopt_args_info_help[1] ;
   args_info->config_help = gengetopt_args_info_help[2] ;
+  args_info->verbose_help = gengetopt_args_info_help[3] ;
+  args_info->interval_help = gengetopt_args_info_help[4] ;
   
 }
 
@@ -173,6 +184,7 @@ cmdline_parser_release (struct gengetopt_args_info *args_info)
 
   free_string_field (&(args_info->config_arg));
   free_string_field (&(args_info->config_orig));
+  free_string_field (&(args_info->interval_orig));
   
   
 
@@ -209,6 +221,10 @@ cmdline_parser_dump(FILE *outfile, struct gengetopt_args_info *args_info)
     write_into_file(outfile, "version", 0, 0 );
   if (args_info->config_given)
     write_into_file(outfile, "config", args_info->config_orig, 0);
+  if (args_info->verbose_given)
+    write_into_file(outfile, "verbose", 0, 0 );
+  if (args_info->interval_given)
+    write_into_file(outfile, "interval", args_info->interval_orig, 0);
   
 
   i = EXIT_SUCCESS;
@@ -375,6 +391,12 @@ int update_arg(void *field, char **orig_field,
     val = possible_values[found];
 
   switch(arg_type) {
+  case ARG_FLAG:
+    *((int *)field) = !*((int *)field);
+    break;
+  case ARG_INT:
+    if (val) *((int *)field) = strtol (val, &stop_char, 0);
+    break;
   case ARG_STRING:
     if (val) {
       string_field = (char **)field;
@@ -387,11 +409,22 @@ int update_arg(void *field, char **orig_field,
     break;
   };
 
-	FIX_UNUSED(stop_char);
-	
+  /* check numeric conversion */
+  switch(arg_type) {
+  case ARG_INT:
+    if (val && !(stop_char && *stop_char == '\0')) {
+      fprintf(stderr, "%s: invalid numeric value: %s\n", package_name, val);
+      return 1; /* failure */
+    }
+    break;
+  default:
+    ;
+  };
+
   /* store the original value */
   switch(arg_type) {
   case ARG_NO:
+  case ARG_FLAG:
     break;
   default:
     if (value && orig_field) {
@@ -453,12 +486,14 @@ cmdline_parser_internal (
 
       static struct option long_options[] = {
         { "help",	0, NULL, 'h' },
-        { "version",	0, NULL, 'V' },
+        { "version",	0, NULL, 0 },
         { "config",	1, NULL, 'c' },
+        { "verbose",	0, NULL, 'V' },
+        { "interval",	1, NULL, 'i' },
         { 0,  0, 0, 0 }
       };
 
-      c = getopt_long (argc, argv, "hVc:", long_options, &option_index);
+      c = getopt_long (argc, argv, "hc:Vi:", long_options, &option_index);
 
       if (c == -1) break;	/* Exit from `while (1)' loop.  */
 
@@ -466,11 +501,6 @@ cmdline_parser_internal (
         {
         case 'h':	/* Print help and exit.  */
           cmdline_parser_print_help ();
-          cmdline_parser_free (&local_args_info);
-          exit (EXIT_SUCCESS);
-
-        case 'V':	/* Print version and exit.  */
-          cmdline_parser_print_version ();
           cmdline_parser_free (&local_args_info);
           exit (EXIT_SUCCESS);
 
@@ -486,8 +516,36 @@ cmdline_parser_internal (
             goto failure;
         
           break;
+        case 'V':	/* display few debug messages on stderr.  */
+        
+        
+          if (update_arg((void *)&(args_info->verbose_flag), 0, &(args_info->verbose_given),
+              &(local_args_info.verbose_given), optarg, 0, 0, ARG_FLAG,
+              check_ambiguity, override, 1, 0, "verbose", 'V',
+              additional_error))
+            goto failure;
+        
+          break;
+        case 'i':	/* integration interval.  */
+        
+        
+          if (update_arg( (void *)&(args_info->interval_arg), 
+               &(args_info->interval_orig), &(args_info->interval_given),
+              &(local_args_info.interval_given), optarg, 0, "3", ARG_INT,
+              check_ambiguity, override, 0, 0,
+              "interval", 'i',
+              additional_error))
+            goto failure;
+        
+          break;
 
         case 0:	/* Long option with no short option */
+          if (strcmp (long_options[option_index].name, "version") == 0) {
+            cmdline_parser_print_version ();
+            cmdline_parser_free (&local_args_info);
+            exit (EXIT_SUCCESS);
+          }
+
         case '?':	/* Invalid option.  */
           /* `getopt_long' already printed an error message.  */
           goto failure;

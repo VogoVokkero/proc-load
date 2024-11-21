@@ -6,14 +6,16 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(CJSON REQUIRED libcjson)
+pkg_check_modules(JSONC REQUIRED json-c)
 pkg_check_modules(DLT REQUIRED automotive-dlt)
 
-include_directories(${CJSON_INCLUDE_DIRS} ${DLT_INCLUDE_DIRS})
-link_directories(${CJSON_LIBRARY_DIRS} ${DLT_LIBRARY_DIRS})
-add_definitions(${CJSON_CFLAGS_OTHER} ${DLT_CFLAGS_OTHER})
+include_directories(${JSONC_INCLUDE_DIRS} ${DLT_INCLUDE_DIRS})
+link_directories(${JSONC_LIBRARY_DIRS} ${DLT_LIBRARY_DIRS})
+add_definitions(${JSONC_CFLAGS_OTHER} ${DLT_CFLAGS_OTHER})
+
+add_definitions("-fno-omit-frame-pointer -O1 -g")
 
 # Add the gengetopt-generated file
 add_executable(proc-load proc-load.c cmdline.c)
 
-target_link_libraries(proc-load ${CJSON_LIBRARIES} ${DLT_LIBRARIES})
+target_link_libraries(proc-load ${JSONC_LIBRARIES} ${DLT_LIBRARIES})

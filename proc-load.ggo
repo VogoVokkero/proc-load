@@ -3,3 +3,5 @@ version "1.0"
 purpose "CPU global and per process."
 
 option "config" c "path to the json file, that specifies process to monitor." string optional
+option  "verbose" V "display few debug messages on stderr"  flag  off
+option  "interval" i "integration interval"  int optional default="3"

@@ -42,10 +42,17 @@ struct gengetopt_args_info
   char * config_arg;	/**< @brief path to the json file, that specifies process to monitor..  */
   char * config_orig;	/**< @brief path to the json file, that specifies process to monitor. original value given at command line.  */
   const char *config_help; /**< @brief path to the json file, that specifies process to monitor. help description.  */
+  int verbose_flag;	/**< @brief display few debug messages on stderr (default=off).  */
+  const char *verbose_help; /**< @brief display few debug messages on stderr help description.  */
+  int interval_arg;	/**< @brief integration interval (default='3').  */
+  char * interval_orig;	/**< @brief integration interval original value given at command line.  */
+  const char *interval_help; /**< @brief integration interval help description.  */
   
   unsigned int help_given ;	/**< @brief Whether help was given.  */
   unsigned int version_given ;	/**< @brief Whether version was given.  */
   unsigned int config_given ;	/**< @brief Whether config was given.  */
+  unsigned int verbose_given ;	/**< @brief Whether verbose was given.  */
+  unsigned int interval_given ;	/**< @brief Whether interval was given.  */
 
 } ;
 

@@ -1,0 +1,53 @@
+pid: Process ID.
+comm: The filename of the executable, in parentheses. If the filename contains spaces, they are included here.
+state: Process state
+ppid: Parent process ID.
+pgrp: Process group ID.
+sid: Session ID.
+tty_nr: Controlling terminal of the process.
+tty_pgrp: ID of the foreground process group on the terminal.
+flags: Kernel flags word.
+minflt: Minor faults, without requiring disk IO.
+cminflt: Cumulative minor faults (child processes).
+majflt: Major faults, requiring disk IO.
+cmajflt: Cumulative major faults (child processes).
+--> utime: User mode CPU time in clock ticks.
+--> stime: Kernel mode CPU time in clock ticks.
+cutime: User mode CPU time (child processes) in clock ticks.
+cstime: Kernel mode CPU time (child processes) in clock ticks.
+priority: Priority value (higher number = lower priority).
+nice: Nice value (range: -20 to 19).
+num_threads: Number of threads in the process.
+itrealvalue: Obsolete (always 0).
+--> starttime: Time since system boot (in clock ticks) when the process started.
+vsize: Virtual memory size in bytes.
+--> rss: Resident Set Size (number of memory pages in RAM).
+rsslim: RSS limit in bytes.
+startcode: Address of the start of the executable code.
+endcode: Address of the end of the executable code.
+startstack: Address of the start of the stack.
+kstkesp: Current value of ESP (stack pointer).
+kstkeip: Current value of EIP (instruction pointer).
+signal: Bitmap of pending signals (obsolete).
+blocked: Bitmap of blocked signals.
+sigignore: Bitmap of ignored signals.
+sigcatch: Bitmap of caught signals.
+wchan: Channel in which the process is waiting.
+nswap: Pages swapped (not maintained, always 0).
+cnswap: Cumulative nswap for child processes (not maintained, always 0).
+exit_signal: Signal sent to the parent when the process terminates (thread group leaders only).
+processor: CPU number last executed on.
+rt_priority: Real-time scheduling priority.
+policy: Scheduling policy.
+delayacct_blkio_ticks: Aggregated block I/O delays in clock ticks.
+guest_time: Time spent running a virtual CPU for a guest in clock ticks.
+cguest_time: Guest time for child processes.
+start_data: Address of the start of the data segment.
+end_data: Address of the end of the data segment.
+start_brk: Address of the start of the heap.
+arg_start: Address of the start of the command-line arguments.
+arg_end: Address of the end of the command-line arguments.
+env_start: Address of the start of the environment variables.
+env_end: Address of the end of the environment variables.
+exit_code: The exit status of the process.
+
