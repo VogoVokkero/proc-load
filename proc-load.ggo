@@ -1,0 +1,6 @@
+prog monitor_process
+version "1.0"
+purpose "CPU global and per process."
+
+option "config" c "path to the json file, that specifies process to monitor." string default="processes.json"
+flag "help" h "Display help."
