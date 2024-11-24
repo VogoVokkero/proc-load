@@ -14,6 +14,7 @@ DLT_DECLARE_CONTEXT(dlt_ctxt_cpu);
 DLT_DECLARE_CONTEXT(dlt_ctxt_proc);
 
 #define BUFFER_SIZE 256
+#define MAX_MONITORED_APP 10
 
 typedef struct
 {
@@ -22,17 +23,14 @@ typedef struct
     // cpu_load = proc_jiffies[k] - proc_jiffies[k-1] / (g_uptime_jiffies [k] - g_uptime_jiffies[k-1])
     uint32_t proc_jiffies;
     uint32_t proc_jiffies_prev;
-
     uint32_t rss;
-
     double cpu;
-
     char *cmdline;
     uint32_t pid;
 
 } ProcessCPU;
 
-ProcessCPU processes[10];
+ProcessCPU processes[MAX_MONITORED_APP];
 
 uint32_t g_uptime_jiffies = 0U;
 uint32_t g_uptime_jiffies_prev = 0U;
@@ -272,7 +270,7 @@ static uint8_t read_json_cmdlines(const char *json_file_path, ProcessCPU *proces
     // Iterate over the array and print file names
     size_t num_files = json_object_array_length(parsed_json);
 
-    for (size_t i = 0; i < num_files; i++)
+    for (size_t i = 0; (i < num_files) && (MAX_MONITORED_APP > found_apps); i++)
     {
         struct json_object *file_name_obj = json_object_array_get_idx(parsed_json, i);
         char *cmdline = json_object_get_string(file_name_obj);

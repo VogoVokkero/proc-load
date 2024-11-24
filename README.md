@@ -44,6 +44,8 @@ gengetopt < proc-load.ggo
 ./proc-load -c example.json --verbose -i 1
 ```
 
+The config file may contain up to 10 apps to monitor.
+
 ## Example of Outputs
 
 ### Example output on stdout (verbose mode)
