@@ -61,37 +61,63 @@ struct gengetopt_args_info g_args_info = {0};
 - guest: running a normal guest
 - guest_nice: running a niced guest
 */
-static void get_cpu_usage(double *usage)
+static double get_cpu_usage(void)
 {
     static uint32_t prev_idle = 0U, prev_total = 0U;
-    uint32_t idle, total;
-    uint32_t user, nice, system, idle_time, iowait, irq, softirq, steal;
-    char buffer[BUFFER_SIZE];
     FILE *file;
+    double usage = 0.0f;
 
     file = fopen("/proc/stat", "r");
-    if (!file)
+    if (file)
     {
-        perror("Erreur lors de l'ouverture de /proc/stat");
+        uint32_t idle, total;
+        uint32_t user, nice, system, idle_time, iowait, irq, softirq, steal;
+        char buffer[BUFFER_SIZE];
+
+        if (fgets(buffer, sizeof(buffer), file))
+        {
+            sscanf(buffer, "cpu %ld %ld %ld %ld %ld %ld %ld %ld",
+                   &user, &nice, &system, &idle_time, &iowait, &irq, &softirq, &steal);
+
+            idle = idle_time + iowait;
+            total = user + nice + system + idle_time + iowait + irq + softirq + steal;
+
+            uint32_t total_diff = total - prev_total;
+            uint32_t idle_diff = idle - prev_idle;
+            usage = 100.0 * (1.0 - ((double)idle_diff / total_diff));
+
+            prev_idle = idle;
+            prev_total = total;
+        }
+
+        fclose(file);
     }
 
-    if (fgets(buffer, sizeof(buffer), file))
+    return usage;
+}
+
+static ssize_t get_kbytes_available(void)
+{
+    char line[BUFFER_SIZE];
+    ssize_t mem_available = -1;
+
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (fp)
     {
-        sscanf(buffer, "cpu %ld %ld %ld %ld %ld %ld %ld %ld",
-               &user, &nice, &system, &idle_time, &iowait, &irq, &softirq, &steal);
+        while (fgets(line, sizeof(line), fp))
+        {
+            if (strncmp(line, "MemAvailable", sizeof("MemAvailable")) == 0)
+            {
+                sscanf(line, "MemAvailable:: %ld kB", &mem_available);
+                break;
+            }
+        }
 
-        idle = idle_time + iowait;
-        total = user + nice + system + idle_time + iowait + irq + softirq + steal;
-
-        uint32_t total_diff = total - prev_total;
-        uint32_t idle_diff = idle - prev_idle;
-        *usage = 100.0 * (1.0 - ((double)idle_diff / total_diff));
-
-        prev_idle = idle;
-        prev_total = total;
+        fclose(fp);
     }
 
-    fclose(file);
+    // Calculate total available memory
+    return mem_available;
 }
 
 static double get_uptime(void)
@@ -125,9 +151,6 @@ static ProcessCPU get_process_cpu_kernel_5_4_3(uint8_t index)
         uint32_t utime, stime;
         uint32_t rss;
 
-        // update total_jiffies
-        get_uptime();
-
         if (fscanf(file, SSCANF_EXTRACT_UTIME_STIME_RSS, &utime, &stime, &rss) == 3)
         {
             processes[index].proc_jiffies = (utime + stime);
@@ -140,7 +163,6 @@ static ProcessCPU get_process_cpu_kernel_5_4_3(uint8_t index)
 
             // shift
             processes[index].proc_jiffies_prev = processes[index].proc_jiffies;
-            g_uptime_jiffies_prev = g_uptime_jiffies;
 
             DLT_LOG(dlt_ctxt_cpu, DLT_LOG_DEBUG, DLT_STRING(processes[index].cmdline),
                     DLT_INT((int)utime),
@@ -311,10 +333,12 @@ int main(int argc, char *argv[])
     // Main loop
     while (0 < cmdline_count)
     {
-        double cpu_usage = 0.0;
-        get_cpu_usage(&cpu_usage);
+        double cpu_usage = get_cpu_usage();
+        uint32_t ram_avail_kBytes = get_kbytes_available();
+        // update total_jiffies
+        get_uptime();
 
-        DLT_LOG(dlt_ctxt_cpu, DLT_LOG_INFO, DLT_STRING("CPU"), DLT_INT((int)cpu_usage));
+        DLT_LOG(dlt_ctxt_cpu, DLT_LOG_INFO, DLT_INT((int)cpu_usage), DLT_UINT((int)ram_avail_kBytes));
 
         for (uint8_t i = 0; i < cmdline_count; i++)
         {
@@ -322,13 +346,17 @@ int main(int argc, char *argv[])
             {
                 get_process_cpu_kernel_5_4_3(i);
 
-                DLT_LOG(dlt_ctxt_proc, DLT_LOG_INFO, DLT_STRING(processes[i].cmdline), DLT_FLOAT32(processes[i].cpu), DLT_INT(processes[i].rss));
+                DLT_LOG(dlt_ctxt_proc, DLT_LOG_INFO, DLT_STRING(processes[i].cmdline), DLT_FLOAT32(processes[i].cpu), DLT_UINT(processes[i].rss));
                 if (g_args_info.verbose_given != 0)
                 {
                     printf("%s:\t%02.2f(%%cpu)\t%d(kBytes)\n", processes[i].cmdline, processes[i].cpu, processes[i].rss);
                 }
             }
         }
+
+        // shift
+        g_uptime_jiffies_prev = g_uptime_jiffies;
+
         sleep(g_args_info.interval_arg); // integration time
     }
 
