@@ -106,9 +106,9 @@ static ssize_t get_kbytes_available(void)
     {
         while (fgets(line, sizeof(line), fp))
         {
-            if (strncmp(line, "MemAvailable", sizeof("MemAvailable")) == 0)
+            if (strncmp(line, "MemAvailable", 8) == 0)
             {
-                sscanf(line, "MemAvailable:: %ld kB", &mem_available);
+                sscanf(line, "MemAvailable: %d kB", &mem_available);
                 break;
             }
         }
@@ -334,11 +334,15 @@ int main(int argc, char *argv[])
     while (0 < cmdline_count)
     {
         double cpu_usage = get_cpu_usage();
-        uint32_t ram_avail_kBytes = get_kbytes_available();
+        ssize_t ram_avail_kBytes = get_kbytes_available();
         // update total_jiffies
         get_uptime();
 
         DLT_LOG(dlt_ctxt_cpu, DLT_LOG_INFO, DLT_INT((int)cpu_usage), DLT_UINT((int)ram_avail_kBytes));
+        if (g_args_info.verbose_given != 0)
+        {
+            printf("global:\t%02.2f(%%cpu)\t%d(kBytes available)\n", cpu_usage, ram_avail_kBytes);
+        }
 
         for (uint8_t i = 0; i < cmdline_count; i++)
         {
